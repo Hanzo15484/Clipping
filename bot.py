@@ -472,7 +472,7 @@ class Commands(commands.Cog):
     
     # User Commands
   @app_commands.command(name="my-profile", description="View your profile information")
-    async def my_profile(self, interaction: discord.Interaction):
+  async def my_profile(self, interaction: discord.Interaction):
         """Display user profile"""
         if not await self.bot.enforce_permission(interaction, 'user'):
             return
