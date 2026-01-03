@@ -436,3 +436,15 @@ class DatabaseService:
         self.database.execute(
             f"DELETE FROM view_history WHERE recorded_at < datetime('now', '-{days} days')"
         )
+
+    async def create_user(self, discord_id: str, username: str) -> bool:
+        """Create a new user"""
+        try:
+            self.database.execute(
+                "INSERT INTO users (discord_id, username) VALUES (?, ?)",
+                (discord_id, username)
+            )
+            return True
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            return False
