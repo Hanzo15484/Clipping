@@ -34,33 +34,45 @@ class CLBot(commands.Bot):
         
     async def setup_hook(self):
         """Setup the bot after login"""
-        # Initialize database
-        await self.db_service.initialize()
-        
-        # Load cogs
-        await self.load_cogs()
-        
-        # Sync commands
-        await self.sync_commands()
-        
-        # Start background tasks
-        self.view_tracker.start_tracking()
-        
+        try:
+            # Initialize database
+            await self.db_service.initialize()
+            
+            # Load cogs
+            await self.load_cogs()
+            
+            # Sync commands
+            await self.sync_commands()
+            
+            # Start background tasks
+            self.view_tracker.start_tracking()
+            
+            logger.info("Bot setup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error in setup_hook: {e}")
+            raise
+            
     async def load_cogs(self):
         """Load all cogs"""
-        # Load command cogs
-        await self.load_extension("commands.user_commands")
-        await self.load_extension("commands.staff_commands")
-        await self.load_extension("commands.admin_commands")
-        await self.load_extension("commands.campaign_commands")
-        await self.load_extension("commands.payment_commands")
+        cogs = [
+            "commands.user_commands",
+            "commands.staff_commands",
+            "commands.admin_commands",
+            "commands.campaign_commands",
+            "commands.payment_commands",
+            "events.interaction_handlers",
+            "events.modal_handlers"
+        ]
         
-        # Load event cogs
-        await self.load_extension("events.interaction_handlers")
-        await self.load_extension("events.modal_handlers")
-        
-        logger.info("All cogs loaded successfully")
-        
+        for cog in cogs:
+            try:
+                await self.load_extension(cog)
+                logger.info(f"Loaded cog: {cog}")
+            except Exception as e:
+                logger.error(f"Failed to load cog {cog}: {e}")
+                raise
+                
     async def sync_commands(self):
         """Sync slash commands"""
         try:
@@ -71,7 +83,8 @@ class CLBot(commands.Bot):
             
     async def on_ready(self):
         """Called when bot is ready"""
-        logger.info(f"Logged in as {self.user}")
+        logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
+        logger.info(f"Connected to {len(self.guilds)} guild(s)")
         
         # Set up channels
         await self.setup_channels()
@@ -79,23 +92,31 @@ class CLBot(commands.Bot):
         await self.db_service.log_action(
             action_type='BOT_STARTED',
             performed_by='system',
-            details={'status': 'online'}
+            details={'status': 'online', 'guilds': len(self.guilds)}
         )
         
     async def setup_channels(self):
         """Set up required channels"""
-        log_channel_id = int(os.getenv('LOG_CHANNEL_ID', '0'))
-        submission_channel_id = int(os.getenv('SUBMISSION_CHANNEL_ID', '0'))
-        
-        if log_channel_id:
-            self.log_channel = self.get_channel(log_channel_id)
-            if self.log_channel:
-                logger.info(f"Log channel set: {self.log_channel.name}")
-                
-        if submission_channel_id:
-            self.submission_channel = self.get_channel(submission_channel_id)
-            if self.submission_channel:
-                logger.info(f"Submission channel set: {self.submission_channel.name}")
+        try:
+            log_channel_id = int(os.getenv('LOG_CHANNEL_ID', '0'))
+            submission_channel_id = int(os.getenv('SUBMISSION_CHANNEL_ID', '0'))
+            
+            if log_channel_id:
+                self.log_channel = self.get_channel(log_channel_id)
+                if self.log_channel:
+                    logger.info(f"Log channel set: {self.log_channel.name}")
+                else:
+                    logger.warning(f"Log channel ID {log_channel_id} not found")
+                    
+            if submission_channel_id:
+                self.submission_channel = self.get_channel(submission_channel_id)
+                if self.submission_channel:
+                    logger.info(f"Submission channel set: {self.submission_channel.name}")
+                else:
+                    logger.warning(f"Submission channel ID {submission_channel_id} not found")
+                    
+        except Exception as e:
+            logger.error(f"Error setting up channels: {e}")
                 
     async def close(self):
         """Clean shutdown"""
@@ -109,8 +130,17 @@ async def main():
     bot = CLBot()
     
     try:
-        await bot.start(os.getenv('DISCORD_TOKEN'))
+        token = os.getenv('DISCORD_TOKEN')
+        if not token:
+            logger.error("DISCORD_TOKEN not found in environment variables")
+            return
+            
+        await bot.start(token)
     except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt")
+        await bot.close()
+    except Exception as e:
+        logger.error(f"Error running bot: {e}")
         await bot.close()
 
 if __name__ == "__main__":
