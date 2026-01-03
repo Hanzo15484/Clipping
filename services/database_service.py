@@ -414,3 +414,22 @@ class DatabaseService:
             "INSERT INTO view_history (submission_id, views) VALUES (?, ?)",
             (submission_id, views)
       )
+
+    async def update_submission_tracking(self, submission_id: int, tracking: bool):
+    """Update submission tracking status"""
+    self.database.execute(
+        "UPDATE submissions SET tracking = ? WHERE id = ?",
+        (tracking, submission_id)
+    )
+
+    async def cleanup_old_logs(self, days: int):
+        """Clean up old logs"""
+        self.database.exceute(
+            f"DELETE FROM activity_logs WHERE timestamp < datetime('now', '-{days} days')"
+        )
+
+    async def cleanup_old_view_history(self, days: int):
+        """Clean up old view history"""
+        self.database.execute(
+            f"DELETE FROM view_history WHERE recorded_at < datetime('now', '-{days} days')"
+        )
