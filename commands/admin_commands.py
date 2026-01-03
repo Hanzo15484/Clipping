@@ -118,21 +118,21 @@ class AdminCommands(commands.Cog):
                 ephemeral=True
             )
             
-    @app_commands.command(name="campaign-end", description="[Admin] End a campaign")
-    @app_commands.describe(campaign="Campaign name")
-    @app_commands.autocomplete(campaign=async def campaign_autocomplete(
-        interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
+    # Separate autocomplete function
+    async def campaign_autocomplete(self, interaction: discord.Interaction, current: str):
         """Autocomplete for campaign names"""
         try:
-            campaigns = await campaign_service.search_live_campaigns(current)
+            campaigns = await self.campaign_service.search_live_campaigns(current)
             return [
                 app_commands.Choice(name=campaign.name, value=campaign.name)
                 for campaign in campaigns[:10]
             ]
         except:
             return []
-    )
+            
+    @app_commands.command(name="campaign-end", description="[Admin] End a campaign")
+    @app_commands.describe(campaign="Campaign name")
+    @app_commands.autocomplete(campaign=campaign_autocomplete)
     async def campaign_end(self, interaction: discord.Interaction, campaign: str):
         """End a campaign"""
         if not await PermissionManager.enforce_permission(interaction, 'admin'):
