@@ -1,6 +1,9 @@
+import os
+import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from datetime import datetime, timezone, timedelta
 
 from utils.permissions import PermissionManager
 from services.database_service import DatabaseService
@@ -8,12 +11,32 @@ from utils.validators import Validator
 from utils.normalizers import Normalizer
 from views.approval_views import ProfileReviewView
 
+logger = logging.getLogger(__name__)
 db_service = DatabaseService()
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 class StaffCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db_service = db_service
+        
+    def format_ist_time(self, dt):
+        """Format datetime to IST and return discord timestamp"""
+        if dt is None:
+            return "Never"
+        
+        # Convert to IST if it has timezone info
+        if dt.tzinfo is not None:
+            ist_dt = dt.astimezone(IST)
+        else:
+            # Assume UTC if no timezone
+            utc_dt = dt.replace(tzinfo=timezone.utc)
+            ist_dt = utc_dt.astimezone(IST)
+        
+        # Return Discord timestamp
+        return f"<t:{int(ist_dt.timestamp())}:R>"
         
     @app_commands.command(name="register", description="[Staff] Register a social profile for user")
     @app_commands.describe(
@@ -96,11 +119,11 @@ class StaffCommands(commands.Cog):
             )
             
         except Exception as e:
+            logger.error(f"Error in register: {e}")
             await interaction.response.send_message(
                 "❌ An error occurred while registering profile.",
                 ephemeral=True
             )
-            raise
             
     @app_commands.command(name="approval-page", description="[Staff] View pending approvals")
     async def approval_page(self, interaction: discord.Interaction):
@@ -119,12 +142,12 @@ class StaffCommands(commands.Cog):
                 title="📋 Approval Queue",
                 description="Pending items requiring review",
                 color=discord.Color.yellow(),
-                timestamp=discord.utils.utcnow()
+                timestamp=datetime.now(IST)
             )
             
             if pending_profiles:
                 profile_text = "\n\n".join([
-                    f"**{i+1}. {p.platform.upper()}**\nUser: <@{p.discord_id}>\nProfile: {p.profile_url}\nSubmitted: <t:{int(p.created_at.timestamp())}:R>"
+                    f"**{i+1}. {p.platform.upper()}**\nUser: <@{p.discord_id}>\nProfile: {p.profile_url}\nSubmitted: {self.format_ist_time(p.created_at)}"
                     for i, p in enumerate(pending_profiles)
                 ])
                 embed.add_field(
@@ -135,7 +158,7 @@ class StaffCommands(commands.Cog):
                 
             if pending_submissions:
                 submission_text = "\n\n".join([
-                    f"**{i+1}. {s['campaign_name']}**\nUser: <@{s['discord_id']}>\nVideo: {s['video_url']}\nViews: {s['starting_views']:,}\nSubmitted: <t:{int(s['submitted_at'].timestamp())}:R>"
+                    f"**{i+1}. {s['campaign_name']}**\nUser: <@{s['discord_id']}>\nVideo: {s['video_url']}\nViews: {s['starting_views']:,}\nSubmitted: {self.format_ist_time(s['submitted_at'])}"
                     for i, s in enumerate(pending_submissions)
                 ])
                 embed.add_field(
@@ -151,18 +174,17 @@ class StaffCommands(commands.Cog):
             view = None
             if pending_profiles:
                 class ProfileSelectView(discord.ui.View):
-                    def __init__(self, profiles, bot):
+                    def __init__(self, profiles):
                         super().__init__(timeout=180)  # 3 minute timeout
                         self.profiles = profiles
-                        self.bot = bot
                         
                         # Create select menu
                         select = discord.ui.Select(
                             placeholder="Select profile to review",
                             options=[
                                 discord.SelectOption(
-                                    label=f"{p.platform} - {p.discord_id[:10]}",
-                                    description=f"Profile {i+1}",
+                                    label=f"{p.platform} - {p.discord_id[:8]}...",
+                                    description=f"Click to review profile {i+1}",
                                     value=str(p.id)
                                 )
                                 for i, p in enumerate(profiles)
@@ -180,29 +202,35 @@ class StaffCommands(commands.Cog):
                             embed = discord.Embed(
                                 title="👤 Profile Review",
                                 color=discord.Color.blue(),
-                                timestamp=discord.utils.utcnow()
+                                timestamp=datetime.now(IST)
                             )
                             embed.add_field(name="User", value=f"<@{profile.discord_id}>", inline=True)
                             embed.add_field(name="Platform", value=profile.platform, inline=True)
                             embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
                             embed.add_field(name="Status", value=profile.status, inline=True)
+                            embed.add_field(name="Submitted", value=self.format_ist_time(profile.created_at), inline=True)
                             
                             await interaction.response.send_message(
                                 embed=embed,
                                 view=view,
                                 ephemeral=True
                             )
+                        else:
+                            await interaction.response.send_message(
+                                "❌ Profile not found.",
+                                ephemeral=True
+                            )
                 
-                view = ProfileSelectView(pending_profiles, self.bot)
+                view = ProfileSelectView(pending_profiles)
                 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             
         except Exception as e:
+            logger.error(f"Error in approval_page: {e}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching approval queue.",
                 ephemeral=True
             )
-            raise
             
     @app_commands.command(name="ban-social", description="[Staff] Ban a social profile")
     @app_commands.describe(
@@ -264,11 +292,11 @@ class StaffCommands(commands.Cog):
             )
             
         except Exception as e:
+            logger.error(f"Error in ban_social: {e}")
             await interaction.response.send_message(
                 "❌ An error occurred while banning profile.",
                 ephemeral=True
             )
-            raise
             
     @app_commands.command(name="ban-list", description="[Staff] List banned profiles")
     async def ban_list(self, interaction: discord.Interaction):
@@ -291,24 +319,25 @@ class StaffCommands(commands.Cog):
             embed = discord.Embed(
                 title="🚫 Banned Profiles",
                 color=discord.Color.red(),
-                timestamp=discord.utils.utcnow()
+                timestamp=datetime.now(IST)
             )
             
             for i, ban in enumerate(banned_profiles):
+                banned_time = self.format_ist_time(ban.banned_at)
                 embed.add_field(
                     name=f"{i+1}. {ban.platform.upper()}",
-                    value=f"**Profile:** {ban.profile_url}\n**Reason:** {ban.reason}\n**Banned by:** <@{ban.banned_by}>\n**Date:** <t:{int(ban.banned_at.timestamp())}:R>",
+                    value=f"**Profile:** {ban.profile_url}\n**Reason:** {ban.reason}\n**Banned by:** <@{ban.banned_by}>\n**Date:** {banned_time}",
                     inline=False
                 )
                 
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
+            logger.error(f"Error in ban_list: {e}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching banned profiles.",
                 ephemeral=True
             )
-            raise
 
 async def setup(bot):
     await bot.add_cog(StaffCommands(bot))
