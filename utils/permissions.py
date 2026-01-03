@@ -14,11 +14,29 @@ class PermissionManager:
         if required_role == 'user':
             return True
         
+        # Check if user has admin permissions in Discord
+        if member.guild_permissions.administrator:
+            return True
+        
         if required_role == 'staff':
-            return any(role.name in [STAFF_ROLE, ADMIN_ROLE] for role in member.roles)
+            # Check role names
+            staff_role = discord.utils.get(interaction.guild.roles, name=STAFF_ROLE)
+            admin_role = discord.utils.get(interaction.guild.roles, name=ADMIN_ROLE)
+            
+            if staff_role and staff_role in member.roles:
+                return True
+            if admin_role and admin_role in member.roles:
+                return True
+            if member.guild_permissions.manage_guild:
+                return True
         
         if required_role == 'admin':
-            return any(role.name == ADMIN_ROLE for role in member.roles)
+            # Check admin role
+            admin_role = discord.utils.get(interaction.guild.roles, name=ADMIN_ROLE)
+            if admin_role and admin_role in member.roles:
+                return True
+            if member.guild_permissions.administrator:
+                return True
         
         return False
     
@@ -27,8 +45,15 @@ class PermissionManager:
         """Enforce permission check and respond if failed"""
         has_perm = await PermissionManager.check_permission(interaction, required_role)
         if not has_perm:
+            if required_role == 'staff':
+                role_name = STAFF_ROLE
+            elif required_role == 'admin':
+                role_name = ADMIN_ROLE
+            else:
+                role_name = required_role
+                
             await interaction.response.send_message(
-                "❌ You do not have permission to use this command.",
+                f"❌ You need the `{role_name}` role to use this command.",
                 ephemeral=True
             )
         return has_perm
