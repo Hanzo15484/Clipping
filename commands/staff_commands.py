@@ -150,27 +150,29 @@ class StaffCommands(commands.Cog):
             # Create select menu for profiles
             view = None
             if pending_profiles:
-                options = []
-                for i, profile in enumerate(pending_profiles):
-                    user = await self.bot.fetch_user(int(profile.discord_id))
-                    username = user.name if user else profile.discord_id
-                    
-                    options.append(discord.SelectOption(
-                        label=f"{profile.platform} - {username[:20]}",
-                        description=f"Profile {i+1}",
-                        value=f"review_profile:{profile.id}"
-                    ))
-                    
-                class ProfileSelect(discord.ui.Select):
-                    def __init__(self):
-                        super().__init__(
-                            placeholder="Select profile to review",
-                            options=options,
-                            custom_id="approval_select"
-                        )
+                class ProfileSelectView(discord.ui.View):
+                    def __init__(self, profiles, bot):
+                        super().__init__(timeout=180)  # 3 minute timeout
+                        self.profiles = profiles
+                        self.bot = bot
                         
-                    async def callback(self, interaction: discord.Interaction):
-                        profile_id = int(self.values[0].split(":")[1])
+                        # Create select menu
+                        select = discord.ui.Select(
+                            placeholder="Select profile to review",
+                            options=[
+                                discord.SelectOption(
+                                    label=f"{p.platform} - {p.discord_id[:10]}",
+                                    description=f"Profile {i+1}",
+                                    value=str(p.id)
+                                )
+                                for i, p in enumerate(profiles)
+                            ]
+                        )
+                        select.callback = self.select_callback
+                        self.add_item(select)
+                        
+                    async def select_callback(self, interaction: discord.Interaction):
+                        profile_id = int(self.values[0])
                         profile = await db_service.get_profile_by_id(profile_id)
                         
                         if profile:
@@ -190,9 +192,8 @@ class StaffCommands(commands.Cog):
                                 view=view,
                                 ephemeral=True
                             )
-                            
-                view = discord.ui.View(timeout=None)
-                view.add_item(ProfileSelect())
+                
+                view = ProfileSelectView(pending_profiles, self.bot)
                 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             
