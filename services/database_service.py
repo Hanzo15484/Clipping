@@ -1,17 +1,24 @@
 import os
-from datetime import datetime
-from typing import Optional, List, Dict, Any
 import logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any
 
 from database import Database
 from models import User, SocialProfile, Campaign, Submission, BannedProfile, Payout
 
 logger = logging.getLogger(__name__)
 
+# IST timezone
+IST = timezone(timedelta(hours=5, minutes=30))
+
 class DatabaseService:
     def __init__(self):
         self.db_path = os.getenv('DATABASE_PATH', 'database.sqlite')
         self.database = Database(self.db_path)
+        
+    def get_current_ist_time(self):
+        """Get current time in IST"""
+        return datetime.now(IST)
         
     async def initialize(self):
         """Initialize database service"""
@@ -43,7 +50,17 @@ class DatabaseService:
             "SELECT * FROM users WHERE discord_id = ?",
             (discord_id,)
         )
-        return User.from_row(row) if row else None
+        if row:
+            return User(
+                discord_id=row['discord_id'],
+                username=row['username'],
+                usdt_wallet=row['usdt_wallet'],
+                total_earnings=row['total_earnings'] or 0.0,
+                paid_earnings=row['paid_earnings'] or 0.0,
+                pending_earnings=row['pending_earnings'] or 0.0,
+                created_at=row['created_at']
+            )
+        return None
         
     async def update_user_wallet(self, discord_id: str, wallet: str):
         """Update user's USDT wallet"""
@@ -72,8 +89,8 @@ class DatabaseService:
                 'approved_submissions': row['approved_submissions'] or 0,
                 'campaigns_participated': row['campaigns_participated'] or 0,
                 'total_views': row['total_views'] or 0,
-                'total_earned': row['total_earned'] or 0,
-                'last_submission': datetime.fromisoformat(row['last_submission']) if row['last_submission'] else None
+                'total_earned': row['total_earned'] or 0.0,
+                'last_submission': row['last_submission']
             }
         return {}
         
@@ -83,7 +100,23 @@ class DatabaseService:
             "SELECT * FROM social_profiles WHERE discord_id = ? ORDER BY created_at DESC",
             (discord_id,)
         )
-        return [SocialProfile.from_row(row) for row in rows]
+        profiles = []
+        for row in rows:
+            profiles.append(SocialProfile(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                status=row['status'],
+                followers=row['followers'] or 0,
+                tier=row['tier'],
+                verified_at=row['verified_at'],
+                verified_by=row['verified_by'],
+                rejection_reason=row['rejection_reason'],
+                created_at=row['created_at']
+            ))
+        return profiles
         
     async def get_user_active_campaigns(self, discord_id: str) -> List[Dict]:
         """Get user's active campaigns"""
@@ -112,7 +145,22 @@ class DatabaseService:
             "SELECT * FROM social_profiles WHERE id = ?",
             (profile_id,)
         )
-        return SocialProfile.from_row(row) if row else None
+        if row:
+            return SocialProfile(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                status=row['status'],
+                followers=row['followers'] or 0,
+                tier=row['tier'],
+                verified_at=row['verified_at'],
+                verified_by=row['verified_by'],
+                rejection_reason=row['rejection_reason'],
+                created_at=row['created_at']
+            )
+        return None
         
     async def get_profile_by_url(self, discord_id: str, profile_url: str) -> Optional[SocialProfile]:
         """Get profile by URL"""
@@ -120,7 +168,22 @@ class DatabaseService:
             SELECT * FROM social_profiles 
             WHERE discord_id = ? AND profile_url = ?
         ''', (discord_id, profile_url))
-        return SocialProfile.from_row(row) if row else None
+        if row:
+            return SocialProfile(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                status=row['status'],
+                followers=row['followers'] or 0,
+                tier=row['tier'],
+                verified_at=row['verified_at'],
+                verified_by=row['verified_by'],
+                rejection_reason=row['rejection_reason'],
+                created_at=row['created_at']
+            )
+        return None
         
     async def get_profile_by_normalized_id(self, normalized_id: str) -> Optional[SocialProfile]:
         """Get profile by normalized ID"""
@@ -128,7 +191,22 @@ class DatabaseService:
             "SELECT * FROM social_profiles WHERE normalized_id = ?",
             (normalized_id,)
         )
-        return SocialProfile.from_row(row) if row else None
+        if row:
+            return SocialProfile(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                status=row['status'],
+                followers=row['followers'] or 0,
+                tier=row['tier'],
+                verified_at=row['verified_at'],
+                verified_by=row['verified_by'],
+                rejection_reason=row['rejection_reason'],
+                created_at=row['created_at']
+            )
+        return None
         
     async def get_pending_profiles(self, limit: int = 10) -> List[SocialProfile]:
         """Get pending profiles"""
@@ -140,15 +218,32 @@ class DatabaseService:
             ORDER BY sp.created_at DESC
             LIMIT ?
         ''', (limit,))
-        return [SocialProfile.from_row(row) for row in rows]
+        profiles = []
+        for row in rows:
+            profiles.append(SocialProfile(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                status=row['status'],
+                followers=row['followers'] or 0,
+                tier=row['tier'],
+                verified_at=row['verified_at'],
+                verified_by=row['verified_by'],
+                rejection_reason=row['rejection_reason'],
+                created_at=row['created_at']
+            ))
+        return profiles
         
     async def approve_profile(self, profile_id: int, approved_by: str):
         """Approve profile"""
+        current_time = self.get_current_ist_time()
         self.database.execute('''
             UPDATE social_profiles 
             SET status = 'approved', verified_at = ?, verified_by = ?
             WHERE id = ?
-        ''', (datetime.now().isoformat(), approved_by, profile_id))
+        ''', (current_time.isoformat(), approved_by, profile_id))
         
     async def reject_profile(self, profile_id: int, reason: str):
         """Reject profile"""
@@ -164,7 +259,17 @@ class DatabaseService:
             "SELECT * FROM banned_profiles WHERE normalized_id = ?",
             (normalized_id,)
         )
-        return BannedProfile.from_row(row) if row else None
+        if row:
+            return BannedProfile(
+                id=row['id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                reason=row['reason'],
+                banned_by=row['banned_by'],
+                banned_at=row['banned_at']
+            )
+        return None
         
     async def get_ban_by_id(self, ban_id: int) -> Optional[BannedProfile]:
         """Get ban by ID"""
@@ -172,7 +277,17 @@ class DatabaseService:
             "SELECT * FROM banned_profiles WHERE id = ?",
             (ban_id,)
         )
-        return BannedProfile.from_row(row) if row else None
+        if row:
+            return BannedProfile(
+                id=row['id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                reason=row['reason'],
+                banned_by=row['banned_by'],
+                banned_at=row['banned_at']
+            )
+        return None
         
     async def get_banned_profiles(self, limit: int = 20) -> List[BannedProfile]:
         """Get banned profiles"""
@@ -180,17 +295,29 @@ class DatabaseService:
             "SELECT * FROM banned_profiles ORDER BY banned_at DESC LIMIT ?",
             (limit,)
         )
-        return [BannedProfile.from_row(row) for row in rows]
+        bans = []
+        for row in rows:
+            bans.append(BannedProfile(
+                id=row['id'],
+                platform=row['platform'],
+                profile_url=row['profile_url'],
+                normalized_id=row['normalized_id'],
+                reason=row['reason'],
+                banned_by=row['banned_by'],
+                banned_at=row['banned_at']
+            ))
+        return bans
         
     async def ban_profile(self, platform: str, profile_url: str, 
                          normalized_id: str, reason: str, banned_by: str):
         """Ban a profile"""
+        current_time = self.get_current_ist_time()
         # Add to banned list
         self.database.execute('''
             INSERT INTO banned_profiles 
-            (platform, profile_url, normalized_id, reason, banned_by)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (platform, profile_url, normalized_id, reason, banned_by))
+            (platform, profile_url, normalized_id, reason, banned_by, banned_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (platform, profile_url, normalized_id, reason, banned_by, current_time.isoformat()))
         
         # Update profile status
         self.database.execute(
@@ -228,7 +355,25 @@ class DatabaseService:
             "SELECT * FROM campaigns WHERE name = ?",
             (name,)
         )
-        return Campaign.from_row(row) if row else None
+        if row:
+            return Campaign(
+                id=row['id'],
+                name=row['name'],
+                platform=row['platform'],
+                total_budget=row['total_budget'],
+                rate_per_100k=row['rate_per_100k'],
+                rate_per_1m=row['rate_per_1m'],
+                min_views=row['min_views'],
+                min_followers=row['min_followers'],
+                max_earn_per_creator=row['max_earn_per_creator'],
+                max_earn_per_post=row['max_earn_per_post'],
+                status=row['status'],
+                created_by=row['created_by'],
+                ended_at=row['ended_at'],
+                remaining_budget=row['remaining_budget'],
+                created_at=row['created_at']
+            )
+        return None
         
     async def get_campaign_by_id(self, campaign_id: int) -> Optional[Campaign]:
         """Get campaign by ID"""
@@ -236,7 +381,25 @@ class DatabaseService:
             "SELECT * FROM campaigns WHERE id = ?",
             (campaign_id,)
         )
-        return Campaign.from_row(row) if row else None
+        if row:
+            return Campaign(
+                id=row['id'],
+                name=row['name'],
+                platform=row['platform'],
+                total_budget=row['total_budget'],
+                rate_per_100k=row['rate_per_100k'],
+                rate_per_1m=row['rate_per_1m'],
+                min_views=row['min_views'],
+                min_followers=row['min_followers'],
+                max_earn_per_creator=row['max_earn_per_creator'],
+                max_earn_per_post=row['max_earn_per_post'],
+                status=row['status'],
+                created_by=row['created_by'],
+                ended_at=row['ended_at'],
+                remaining_budget=row['remaining_budget'],
+                created_at=row['created_at']
+            )
+        return None
         
     # Submission operations
     async def create_submission(self, discord_id: str, campaign_id: int, 
@@ -244,14 +407,15 @@ class DatabaseService:
                                normalized_video_id: str, platform: str,
                                starting_views: int) -> int:
         """Create submission"""
+        current_time = self.get_current_ist_time()
         self.database.execute('''
             INSERT INTO submissions 
             (discord_id, campaign_id, social_profile_id, video_url, normalized_video_id, 
-             platform, starting_views, current_views)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             platform, starting_views, current_views, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             discord_id, campaign_id, social_profile_id, video_url,
-            normalized_video_id, platform, starting_views, starting_views
+            normalized_video_id, platform, starting_views, starting_views, current_time.isoformat()
         ))
         return self.database.get_lastrowid()
         
@@ -261,7 +425,26 @@ class DatabaseService:
             "SELECT * FROM submissions WHERE id = ?",
             (submission_id,)
         )
-        return Submission.from_row(row) if row else None
+        if row:
+            return Submission(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                campaign_id=row['campaign_id'],
+                social_profile_id=row['social_profile_id'],
+                video_url=row['video_url'],
+                normalized_video_id=row['normalized_video_id'],
+                platform=row['platform'],
+                starting_views=row['starting_views'],
+                current_views=row['current_views'],
+                earnings=row['earnings'] or 0.0,
+                status=row['status'],
+                tracking=bool(row['tracking']),
+                submitted_at=row['submitted_at'],
+                approved_at=row['approved_at'],
+                approved_by=row['approved_by'],
+                message_id=row['message_id']
+            )
+        return None
         
     async def get_submission_by_video_id(self, normalized_video_id: str) -> Optional[Submission]:
         """Get submission by video ID"""
@@ -269,7 +452,26 @@ class DatabaseService:
             "SELECT * FROM submissions WHERE normalized_video_id = ?",
             (normalized_video_id,)
         )
-        return Submission.from_row(row) if row else None
+        if row:
+            return Submission(
+                id=row['id'],
+                discord_id=row['discord_id'],
+                campaign_id=row['campaign_id'],
+                social_profile_id=row['social_profile_id'],
+                video_url=row['video_url'],
+                normalized_video_id=row['normalized_video_id'],
+                platform=row['platform'],
+                starting_views=row['starting_views'],
+                current_views=row['current_views'],
+                earnings=row['earnings'] or 0.0,
+                status=row['status'],
+                tracking=bool(row['tracking']),
+                submitted_at=row['submitted_at'],
+                approved_at=row['approved_at'],
+                approved_by=row['approved_by'],
+                message_id=row['message_id']
+            )
+        return None
         
     async def get_pending_submissions(self, limit: int = 10) -> List[Dict]:
         """Get pending submissions"""
@@ -284,10 +486,23 @@ class DatabaseService:
             ORDER BY s.submitted_at DESC
             LIMIT ?
         ''', (limit,))
-        return [dict(row) for row in rows]
+        
+        submissions = []
+        for row in rows:
+            submissions.append({
+                'id': row['id'],
+                'discord_id': row['discord_id'],
+                'campaign_name': row['campaign_name'],
+                'video_url': row['video_url'],
+                'starting_views': row['starting_views'],
+                'submitted_at': row['submitted_at'],
+                'profile_url': row['profile_url']
+            })
+        return submissions
         
     async def approve_submission(self, submission_id: int, approved_by: str):
         """Approve submission"""
+        current_time = self.get_current_ist_time()
         self.database.execute('''
             UPDATE submissions 
             SET status = 'approved', 
@@ -295,7 +510,7 @@ class DatabaseService:
                 approved_at = ?,
                 approved_by = ?
             WHERE id = ?
-        ''', (datetime.now().isoformat(), approved_by, submission_id))
+        ''', (current_time.isoformat(), approved_by, submission_id))
         
     async def reject_submission(self, submission_id: int):
         """Reject submission"""
@@ -325,13 +540,14 @@ class DatabaseService:
     async def create_payout(self, discord_id: str, campaign_id: int,
                            amount: float, usdt_tx_hash: str, paid_by: str):
         """Create payout record"""
+        current_time = self.get_current_ist_time()
         self.database.execute('''
             INSERT INTO payouts 
             (discord_id, campaign_id, amount, status, usdt_tx_hash, paid_by, paid_at)
             VALUES (?, ?, ?, 'paid', ?, ?, ?)
         ''', (
             discord_id, campaign_id, amount, usdt_tx_hash,
-            paid_by, datetime.now().isoformat()
+            paid_by, current_time.isoformat()
         ))
         
         # Update user earnings
@@ -347,77 +563,13 @@ class DatabaseService:
                         target_user: Optional[str] = None, details: Dict[str, Any] = None):
         """Log action to database"""
         import json
+        current_time = self.get_current_ist_time()
         self.database.execute(
-            "INSERT INTO activity_logs (action_type, performed_by, target_user, details) VALUES (?, ?, ?, ?)",
-            (action_type, performed_by, target_user, json.dumps(details) if details else None)
+            "INSERT INTO activity_logs (action_type, performed_by, target_user, details, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (action_type, performed_by, target_user, json.dumps(details) if details else None, current_time.isoformat())
         )
         
-    # Tracking operations
-    async def get_tracking_submissions(self) -> List[Dict]:
-        """Get submissions that need tracking"""
-        rows = self.database.fetch_all('''
-            SELECT s.*, c.rate_per_100k, c.rate_per_1m, 
-                   c.max_earn_per_post, c.remaining_budget,
-                   sp.status as profile_status
-            FROM submissions s
-            JOIN campaigns c ON s.campaign_id = c.id
-            JOIN social_profiles sp ON s.social_profile_id = sp.id
-            WHERE s.tracking = TRUE 
-              AND s.status = 'approved'
-              AND c.status = 'live'
-              AND sp.status != 'banned'
-        ''')
-        return [dict(row) for row in rows]
-        
-    async def update_submission_views(self, submission_id: int, current_views: int, earnings: float):
-        """Update submission views and earnings"""
-        # Get max earnings first
-        max_earnings = await self.get_max_earnings(submission_id)
-        
-        self.database.execute('''
-            UPDATE submissions 
-            SET current_views = ?, 
-                earnings = earnings + ?,
-                tracking = CASE 
-                    WHEN earnings + ? >= ? THEN FALSE 
-                    ELSE tracking 
-                END
-            WHERE id = ?
-        ''', (current_views, earnings, earnings, max_earnings, submission_id))
-        
-    async def update_campaign_budget(self, campaign_id: int, earnings: float):
-        """Update campaign budget"""
-        self.database.execute(
-            "UPDATE campaigns SET remaining_budget = remaining_budget - ? WHERE id = ?",
-            (earnings, campaign_id)
-        )
-        
-    async def update_user_earnings(self, discord_id: str, earnings: float):
-        """Update user earnings"""
-        self.database.execute('''
-            UPDATE users 
-            SET total_earnings = total_earnings + ?,
-                pending_earnings = pending_earnings + ?
-            WHERE discord_id = ?
-        ''', (earnings, earnings, discord_id))
-        
-    async def get_max_earnings(self, submission_id: int) -> float:
-        """Get maximum earnings for submission"""
-        row = self.database.fetch_one('''
-            SELECT c.max_earn_per_post 
-            FROM submissions s
-            JOIN campaigns c ON s.campaign_id = c.id
-            WHERE s.id = ?
-        ''', (submission_id,))
-        return row['max_earn_per_post'] if row else 0
-        
-    async def add_view_history(self, submission_id: int, views: int):
-        """Add view history record"""
-        self.database.execute(
-            "INSERT INTO view_history (submission_id, views) VALUES (?, ?)",
-            (submission_id, views)
-        )
-        
+    # Other methods
     async def update_submission_tracking(self, submission_id: int, tracking: bool):
         """Update submission tracking status"""
         self.database.execute(
@@ -436,15 +588,3 @@ class DatabaseService:
         self.database.execute(
             f"DELETE FROM view_history WHERE recorded_at < datetime('now', '-{days} days')"
         )
-
-    async def create_user(self, discord_id: str, username: str) -> bool:
-        """Create a new user"""
-        try:
-            self.database.execute(
-                "INSERT INTO users (discord_id, username) VALUES (?, ?)",
-                (discord_id, username)
-            )
-            return True
-        except Exception as e:
-            print(f"Error creating user: {e}")
-            return False
