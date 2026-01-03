@@ -371,6 +371,9 @@ class DatabaseService:
         
     async def update_submission_views(self, submission_id: int, current_views: int, earnings: float):
         """Update submission views and earnings"""
+        # Get max earnings first
+        max_earnings = await self.get_max_earnings(submission_id)
+        
         self.database.execute('''
             UPDATE submissions 
             SET current_views = ?, 
@@ -380,7 +383,7 @@ class DatabaseService:
                     ELSE tracking 
                 END
             WHERE id = ?
-        ''', (current_views, earnings, earnings, self.get_max_earnings(submission_id), submission_id))
+        ''', (current_views, earnings, earnings, max_earnings, submission_id))
         
     async def update_campaign_budget(self, campaign_id: int, earnings: float):
         """Update campaign budget"""
@@ -413,21 +416,21 @@ class DatabaseService:
         self.database.execute(
             "INSERT INTO view_history (submission_id, views) VALUES (?, ?)",
             (submission_id, views)
-      )
-
+        )
+        
     async def update_submission_tracking(self, submission_id: int, tracking: bool):
-    """Update submission tracking status"""
-    self.database.execute(
-        "UPDATE submissions SET tracking = ? WHERE id = ?",
-        (tracking, submission_id)
-    )
-
+        """Update submission tracking status"""
+        self.database.execute(
+            "UPDATE submissions SET tracking = ? WHERE id = ?",
+            (tracking, submission_id)
+        )
+        
     async def cleanup_old_logs(self, days: int):
         """Clean up old logs"""
-        self.database.exceute(
+        self.database.execute(
             f"DELETE FROM activity_logs WHERE timestamp < datetime('now', '-{days} days')"
         )
-
+        
     async def cleanup_old_view_history(self, days: int):
         """Clean up old view history"""
         self.database.execute(
