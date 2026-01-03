@@ -1,7 +1,7 @@
 import sqlite3
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,30 @@ class Database:
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
+            
+            # Add datetime adapter
+            sqlite3.register_adapter(datetime, self.adapt_datetime)
+            sqlite3.register_converter("timestamp", self.convert_datetime)
+            
         return self.connection
+        
+    def adapt_datetime(self, dt):
+        """Convert datetime to ISO format string"""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+        
+    def convert_datetime(self, ts):
+        """Convert ISO format string to datetime"""
+        if isinstance(ts, bytes):
+            ts = ts.decode('utf-8')
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except:
+            return None
         
     def ensure_connected(self):
         """Ensure database is connected"""
@@ -190,7 +213,8 @@ class Database:
         self.ensure_connected()
         cursor = self.connection.cursor()
         cursor.execute(query, params)
-        return cursor.fetchone()
+        result = cursor.fetchone()
+        return result
         
     def fetch_all(self, query: str, params: tuple = ()):
         """Fetch all rows"""
