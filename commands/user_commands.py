@@ -1,3 +1,5 @@
+import os
+import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -6,6 +8,9 @@ from utils.permissions import PermissionManager
 from services.database_service import DatabaseService
 from utils.validators import Validator
 from utils.normalizers import Normalizer
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 db_service = DatabaseService()
 
@@ -23,7 +28,7 @@ class UserCommands(commands.Cog):
                 return await self.db_service.get_user(discord_id)
             return user
         except Exception as e:
-            print(f"Error ensuring user exists: {e}")
+            logger.error(f"Error ensuring user exists: {e}")
             # Create user anyway
             await self.db_service.create_user_if_not_exists(discord_id, username)
             return await self.db_service.get_user(discord_id)
@@ -65,7 +70,8 @@ class UserCommands(commands.Cog):
                 total_submissions = stats.get('total_submissions', 0)
                 approved_submissions = stats.get('approved_submissions', 0)
                 total_earned = stats.get('total_earned', 0.0)
-            except:
+            except Exception as e:
+                logger.error(f"Error getting user stats: {e}")
                 total_submissions = 0
                 approved_submissions = 0
                 total_earned = 0.0
@@ -101,7 +107,6 @@ class UserCommands(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Error in my_profile: {str(e)}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching your profile. Please try again.",
@@ -179,20 +184,19 @@ class UserCommands(commands.Cog):
                         value=f"<t:{int(last_submission.timestamp())}:R>",
                         inline=True
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error formatting last submission: {e}")
                 
             if active_campaigns:
                 try:
                     campaign_text = ", ".join([c['name'] for c in active_campaigns])
                     embed.add_field(name="Active Campaigns", value=campaign_text)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error formatting active campaigns: {e}")
                 
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Error in my_stats: {str(e)}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching your statistics. Please try again.",
@@ -321,7 +325,7 @@ class UserCommands(commands.Cog):
                         str(message.id)
                     )
                 except Exception as e:
-                    print(f"Warning: Could not post to submission channel: {e}")
+                    logger.error(f"Could not post to submission channel: {e}")
                 
             await interaction.followup.send(
                 "✅ Submission received! Staff will review it shortly.",
@@ -339,7 +343,6 @@ class UserCommands(commands.Cog):
             )
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Error in submit: {str(e)}")
             await interaction.followup.send(
                 "❌ An error occurred while submitting.",
@@ -379,7 +382,6 @@ class UserCommands(commands.Cog):
             )
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Error in add_payment: {str(e)}")
             await interaction.response.send_message(
                 "❌ An error occurred while updating wallet.",
