@@ -12,19 +12,27 @@ class Database:
         
     def connect(self):
         """Connect to database"""
-        self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA foreign_keys = ON")
-        self.connection.execute("PRAGMA journal_mode = WAL")
+        if self.connection is None:
+            self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys = ON")
+            self.connection.execute("PRAGMA journal_mode = WAL")
+        return self.connection
+        
+    def ensure_connected(self):
+        """Ensure database is connected"""
+        if self.connection is None:
+            self.connect()
         
     def close(self):
         """Close database connection"""
         if self.connection:
             self.connection.close()
+            self.connection = None
             
     def initialize(self):
         """Initialize database with all tables"""
-        self.connect()
+        self.ensure_connected()
         
         try:
             # Users table
@@ -171,6 +179,7 @@ class Database:
             
     def execute(self, query: str, params: tuple = ()):
         """Execute a query"""
+        self.ensure_connected()
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         self.connection.commit()
@@ -178,16 +187,19 @@ class Database:
         
     def fetch_one(self, query: str, params: tuple = ()):
         """Fetch single row"""
+        self.ensure_connected()
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         return cursor.fetchone()
         
     def fetch_all(self, query: str, params: tuple = ()):
         """Fetch all rows"""
+        self.ensure_connected()
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         return cursor.fetchall()
         
     def get_lastrowid(self):
         """Get last inserted row ID"""
+        self.ensure_connected()
         return self.connection.cursor().lastrowid
