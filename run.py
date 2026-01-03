@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CL Bot - Content Clipping & Promotion Discord Bot
+Clipping Bot - Content Clipping & Promotion Discord Bot
 Entry point script
 """
 
@@ -10,7 +10,7 @@ from main import main
 if __name__ == "__main__":
     print("""
     ╔══════════════════════════════════════════════╗
-    ║     CL Bot - Content Clipping System         ║
+    ║     Clipping Bot - Content Clipping System         ║
     ║           Starting up...                     ║
     ╚══════════════════════════════════════════════╝
     """)
