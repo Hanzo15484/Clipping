@@ -30,7 +30,7 @@ class CLBot(commands.Bot):
         )
         
         self.db_service = DatabaseService()
-        self.view_tracker = ViewTracker(self)
+        self.view_tracker = None
         
     async def setup_hook(self):
         """Setup the bot after login"""
@@ -44,8 +44,12 @@ class CLBot(commands.Bot):
             # Sync commands
             await self.sync_commands()
             
+            # Initialize view tracker
+            self.view_tracker = ViewTracker(self)
+            
             # Start background tasks
-            self.view_tracker.start_tracking()
+            if self.view_tracker:
+                self.view_tracker.start_tracking()
             
             logger.info("Bot setup completed successfully")
             
@@ -71,7 +75,7 @@ class CLBot(commands.Bot):
                 logger.info(f"Loaded cog: {cog}")
             except Exception as e:
                 logger.error(f"Failed to load cog {cog}: {e}")
-                raise
+                # Don't raise, just log
                 
     async def sync_commands(self):
         """Sync slash commands"""
@@ -89,11 +93,14 @@ class CLBot(commands.Bot):
         # Set up channels
         await self.setup_channels()
         
-        await self.db_service.log_action(
-            action_type='BOT_STARTED',
-            performed_by='system',
-            details={'status': 'online', 'guilds': len(self.guilds)}
-        )
+        try:
+            await self.db_service.log_action(
+                action_type='BOT_STARTED',
+                performed_by='system',
+                details={'status': 'online', 'guilds': len(self.guilds)}
+            )
+        except Exception as e:
+            logger.error(f"Error logging bot start: {e}")
         
     async def setup_channels(self):
         """Set up required channels"""
@@ -121,7 +128,8 @@ class CLBot(commands.Bot):
     async def close(self):
         """Clean shutdown"""
         logger.info("Shutting down...")
-        self.view_tracker.stop_tracking()
+        if self.view_tracker:
+            self.view_tracker.stop_tracking()
         await self.db_service.close()
         await super().close()
 
@@ -133,6 +141,7 @@ async def main():
         token = os.getenv('DISCORD_TOKEN')
         if not token:
             logger.error("DISCORD_TOKEN not found in environment variables")
+            print("❌ ERROR: Please set DISCORD_TOKEN in .env file")
             return
             
         await bot.start(token)
@@ -144,4 +153,5 @@ async def main():
         await bot.close()
 
 if __name__ == "__main__":
+    print("🚀 Starting CL Bot...")
     asyncio.run(main())
