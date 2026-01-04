@@ -3,6 +3,7 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+import urllib.parse
 
 from utils.permissions import PermissionManager
 from services.database_service import DatabaseService
@@ -16,6 +17,38 @@ class UserCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db_service = db_service
+        
+    def clean_profile_url(self, url: str) -> str:
+        """Clean profile URL for comparison"""
+        if not url:
+            return ""
+        
+        # Remove protocol
+        url = url.lower().replace('https://', '').replace('http://', '')
+        
+        # Remove www.
+        if url.startswith('www.'):
+            url = url[4:]
+        
+        # Parse URL to handle query parameters consistently
+        try:
+            # Split into base and query
+            if '?' in url:
+                base, query = url.split('?', 1)
+                # Parse query parameters
+                params = urllib.parse.parse_qs(query)
+                # Sort parameters alphabetically
+                sorted_params = sorted(params.items())
+                # Rebuild query string
+                query = '&'.join([f'{k}={v[0]}' for k, v in sorted_params])
+                url = f"{base}?{query}"
+            else:
+                url = url.rstrip('/')
+        except:
+            # If parsing fails, just use the URL as-is
+            url = url.rstrip('/')
+        
+        return url
         
     async def ensure_user_exists(self, discord_id: str, username: str):
         """Ensure user exists in database"""
@@ -220,7 +253,7 @@ class UserCommands(commands.Cog):
             
             embed.add_field(
                 name="Usage",
-                value="`/submit campaign:<name> profile:<url> video_url:<link>`",
+                value="`/submit-video campaign:<name> profile:<url> video_url:<link>`",
                 inline=False
             )
             
@@ -274,28 +307,77 @@ class UserCommands(commands.Cog):
                 )
                 return
                 
-            # Find profile by URL (exact match)
+            # Get all user profiles
             profiles = await self.db_service.get_user_profiles(user_id)
             profile_data = None
             
+            # Clean the input profile URL
+            cleaned_input = self.clean_profile_url(profile)
+            logger.info(f"Looking for profile. Input cleaned: {cleaned_input}")
+            
             for p in profiles:
-                if p.profile_url == profile and p.status == 'approved':
+                # Clean stored profile URL
+                cleaned_stored = self.clean_profile_url(p.profile_url)
+                logger.info(f"Checking against stored: {cleaned_stored}")
+                
+                if cleaned_input == cleaned_stored:
                     profile_data = p
+                    logger.info(f"Found match! Profile ID: {p.id}, Status: {p.status}")
                     break
             
             if not profile_data:
-                # Try case-insensitive match
+                # Try partial match (just the username part)
                 for p in profiles:
-                    if p.profile_url.lower() == profile.lower():
-                        await interaction.followup.send(
-                            f"❌ Profile found but status is: `{p.status}`. It needs to be `approved`.",
-                            ephemeral=True
-                        )
-                        return
+                    stored_url = p.profile_url.lower()
+                    input_url = profile.lower()
+                    
+                    # Extract username from URLs
+                    import re
+                    stored_username = None
+                    input_username = None
+                    
+                    if 'instagram.com/' in stored_url:
+                        match = re.search(r'instagram\.com/([^/?]+)', stored_url)
+                        if match:
+                            stored_username = match.group(1)
+                    
+                    if 'instagram.com/' in input_url:
+                        match = re.search(r'instagram\.com/([^/?]+)', input_url)
+                        if match:
+                            input_username = match.group(1)
+                    
+                    if stored_username and input_username and stored_username == input_username:
+                        profile_data = p
+                        logger.info(f"Found username match! Profile ID: {p.id}")
+                        break
                 
+                if not profile_data:
+                    # Show all available profiles for debugging
+                    profile_list = "\n".join([
+                        f"• {p.platform}: {p.profile_url} (Status: {p.status})"
+                        for p in profiles
+                    ])
+                    
+                    debug_info = f"""
+**Debug Info:**
+Input URL (cleaned): `{cleaned_input}`
+Your profiles (cleaned):
+""" + "\n".join([f"• {p.platform}: `{self.clean_profile_url(p.profile_url)}` (Status: {p.status})" for p in profiles])
+                    
+                    await interaction.followup.send(
+                        f"❌ Profile not found or not approved.\n\n"
+                        f"**Make sure to copy the EXACT URL from your profile list:**\n"
+                        f"{profile_list}\n\n"
+                        f"{debug_info}",
+                        ephemeral=True
+                    )
+                    return
+            
+            # Check if profile is approved
+            if profile_data.status != 'approved':
                 await interaction.followup.send(
-                    f"❌ Profile not found or not approved.\n\nYour profiles:\n" + 
-                    "\n".join([f"• {p.platform}: {p.profile_url} (Status: {p.status})" for p in profiles]),
+                    f"❌ Profile found but status is: `{profile_data.status}`. It needs to be `approved`.\n"
+                    f"Profile URL: {profile_data.profile_url}",
                     ephemeral=True
                 )
                 return
@@ -356,7 +438,7 @@ class UserCommands(commands.Cog):
                     
                     channel_embed.description = f"**Campaign:** {campaign_data.name}\n**Platform:** {profile_data.platform}\n**Video:** {video_url}"
                     channel_embed.add_field(name="User", value=f"<@{user_id}>", inline=True)
-                    channel_embed.add_field(name="Profile", value=profile, inline=True)
+                    channel_embed.add_field(name="Profile", value=profile_data.profile_url, inline=True)
                     channel_embed.add_field(name="Starting Views", value=f"{starting_views:,}", inline=True)
                     channel_embed.add_field(name="Submission ID", value=f"#{submission_id}", inline=True)
                     
@@ -397,19 +479,18 @@ class UserCommands(commands.Cog):
                 action_type='SUBMISSION_CREATED',
                 performed_by=user_id,
                 details={
-                    'submission_id': submission_id,
+                    'submission_id':submission_id,
                     'campaign': campaign_data.name,
                     'video_url': video_url
                 }
             )
-            
         except Exception as e:
-            logger.error(f"Error in submit_video: {str(e)}")
+            logger.error(f"Error in submit video: {str(e)}")
             await interaction.followup.send(
-                "❌ An error occurred while submitting.",
+            "❌ An error occurred while submitting.",
                 ephemeral=True
             )
-            
+
     @app_commands.command(name="add-payment", description="Add/update your USDT wallet address")
     @app_commands.describe(wallet="Your USDT (ERC20) wallet address")
     async def add_payment(self, interaction: discord.Interaction, wallet: str):
@@ -493,6 +574,81 @@ class UserCommands(commands.Cog):
             logger.error(f"Error in my_profiles: {str(e)}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching your profiles.",
+                ephemeral=True
+            )
+    
+    @app_commands.command(name="test-profile-match", description="Test profile URL matching")
+    @app_commands.describe(profile_url="Profile URL to test")
+    async def test_profile_match(self, interaction: discord.Interaction, profile_url: str):
+        """Test if a profile URL matches your profiles"""
+        if not await PermissionManager.enforce_permission(interaction, 'user'):
+            return
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            profiles = await self.db_service.get_user_profiles(str(interaction.user.id))
+            
+            if not profiles:
+                await interaction.followup.send(
+                    "❌ You don't have any registered social profiles.",
+                    ephemeral=True
+                )
+                return
+            
+            cleaned_input = self.clean_profile_url(profile_url)
+            
+            embed = discord.Embed(
+                title="🔍 Profile Matching Test",
+                description=f"Testing URL: `{profile_url}`",
+                color=discord.Color.blue()
+            )
+            
+            embed.add_field(
+                name="Cleaned Input",
+                value=f"`{cleaned_input}`",
+                inline=False
+            )
+            
+            matches = []
+            for p in profiles:
+                cleaned_stored = self.clean_profile_url(p.profile_url)
+                is_match = cleaned_input == cleaned_stored
+                matches.append({
+                    'profile': p,
+                    'cleaned': cleaned_stored,
+                    'match': is_match
+                })
+                
+                embed.add_field(
+                    name=f"{p.platform.upper()} - ID: {p.id}",
+                    value=f"**Stored:** `{p.profile_url}`\n**Cleaned:** `{cleaned_stored}`\n**Match:** {'✅' if is_match else '❌'}\n**Status:** {p.status}",
+                    inline=False
+                )
+            
+            # Check if any match
+            any_match = any(m['match'] for m in matches)
+            if any_match:
+                embed.color = discord.Color.green()
+                embed.add_field(
+                    name="Result",
+                    value="✅ Found matching profile!",
+                    inline=False
+                )
+            else:
+                embed.color = discord.Color.red()
+                embed.add_field(
+                    name="Result",
+                    value="❌ No matching profile found.",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error in test_profile_match: {str(e)}")
+            await interaction.followup.send(
+                "❌ An error occurred while testing profile match.",
                 ephemeral=True
             )
 
