@@ -28,25 +28,14 @@ class StaffCommands(commands.Cog):
             return "Never"
         
         try:
-            # Convert string to datetime
-            if isinstance(dt_str, str):
-                dt = datetime.fromisoformat(dt_str)
-            else:
-                dt = dt_str
-            
-            # If no timezone, assume UTC
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            
-            # Convert to IST
-            ist_dt = dt.astimezone(IST)
-            
-            # Return Discord timestamp
-            return f"<t:{int(ist_dt.timestamp())}:R>"
-            
-        except Exception as e:
-            logger.error(f"Error formatting time {dt_str}: {e}")
-            return str(dt_str)[:19]  # Return first 19 chars of string
+            # Try to parse the string
+            from datetime import datetime
+            dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
+            # Return Discord timestamp (assuming it's already in UTC)
+            return f"<t:{int(dt.timestamp())}:R>"
+        except:
+            # If parsing fails, return raw string
+            return str(dt_str)[:19]
         
     @app_commands.command(name="register", description="[Staff] Register a social profile for user")
     @app_commands.describe(
@@ -183,56 +172,65 @@ class StaffCommands(commands.Cog):
             # Create select menu for profiles
             view = None
             if pending_profiles:
-                class ProfileSelectView(discord.ui.View):
-                    def __init__(self, profiles, format_time_func):
-                        super().__init__(timeout=180)  # 3 minute timeout
-                        self.profiles = profiles
-                        self.format_time_func = format_time_func
-                        
-                        # Create select menu
-                        select = discord.ui.Select(
-                            placeholder="Select profile to review",
-                            options=[
-                                discord.SelectOption(
-                                    label=f"{p.platform} - ID: {p.id}",
-                                    description=f"User: {p.discord_id[:8]}...",
-                                    value=str(p.id)
-                                )
-                                for i, p in enumerate(profiles)
-                            ]
-                        )
-                        select.callback = self.select_callback
-                        self.add_item(select)
-                        
-                    async def select_callback(self, interaction: discord.Interaction):
-                        profile_id = int(self.values[0])
-                        profile = await db_service.get_profile_by_id(profile_id)
-                        
-                        if profile:
-                            view = ProfileReviewView(profile_id)
-                            embed = discord.Embed(
-                                title="👤 Profile Review",
-                                color=discord.Color.blue(),
-                                timestamp=datetime.now(IST)
-                            )
-                            embed.add_field(name="User", value=f"<@{profile.discord_id}>", inline=True)
-                            embed.add_field(name="Platform", value=profile.platform, inline=True)
-                            embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
-                            embed.add_field(name="Status", value=profile.status, inline=True)
-                            embed.add_field(name="Submitted", value=self.format_time_func(profile.created_at), inline=True)
-                            
-                            await interaction.response.send_message(
-                                embed=embed,
-                                view=view,
-                                ephemeral=True
-                            )
-                        else:
-                            await interaction.response.send_message(
-                                "❌ Profile not found.",
-                                ephemeral=True
-                            )
+                # Create select menu options
+                options = [
+                    discord.SelectOption(
+                        label=f"{p.platform} - ID: {p.id}",
+                        description=f"User: {p.discord_id[:8]}...",
+                        value=str(p.id)
+                    )
+                    for i, p in enumerate(pending_profiles)
+                ]
                 
-                view = ProfileSelectView(pending_profiles, self.format_ist_time)
+                # Create the select menu
+                select = discord.ui.Select(
+                    placeholder="Select profile to review",
+                    options=options
+                )
+                
+                # Define callback
+                async def select_callback(interaction: discord.Interaction):
+                    selected_value = select.values[0] if select.values else None
+                    if not selected_value:
+                        await interaction.response.send_message(
+                            "❌ No profile selected.",
+                            ephemeral=True
+                        )
+                        return
+                    
+                    profile_id = int(selected_value)
+                    profile = await db_service.get_profile_by_id(profile_id)
+                    
+                    if profile:
+                        view = ProfileReviewView(profile_id)
+                        embed = discord.Embed(
+                            title="👤 Profile Review",
+                            color=discord.Color.blue(),
+                            timestamp=datetime.now(IST)
+                        )
+                        embed.add_field(name="User", value=f"<@{profile.discord_id}>", inline=True)
+                        embed.add_field(name="Platform", value=profile.platform, inline=True)
+                        embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
+                        embed.add_field(name="Status", value=profile.status, inline=True)
+                        embed.add_field(name="Submitted", value=self.format_ist_time(profile.created_at), inline=True)
+                        
+                        await interaction.response.send_message(
+                            embed=embed,
+                            view=view,
+                            ephemeral=True
+                        )
+                    else:
+                        await interaction.response.send_message(
+                            "❌ Profile not found.",
+                            ephemeral=True
+                        )
+                
+                # Assign callback to select
+                select.callback = select_callback
+                
+                # Create view and add select
+                view = discord.ui.View(timeout=180)
+                view.add_item(select)
                 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             
