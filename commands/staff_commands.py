@@ -16,93 +16,6 @@ class StaffCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db_service = db_service
-        
-    @app_commands.command(name="register", description="[Staff] Register a social profile for user")
-    @app_commands.describe(
-        user="Discord user",
-        platform="Platform",
-        profile_url="Social profile link"
-    )
-    @app_commands.choices(platform=[
-        app_commands.Choice(name="Instagram", value="instagram"),
-        app_commands.Choice(name="TikTok", value="tiktok"),
-        app_commands.Choice(name="YouTube", value="youtube")
-    ])
-    async def register(self, interaction: discord.Interaction, 
-                      user: discord.User, platform: str, profile_url: str):
-        """Register a social profile"""
-        if not await PermissionManager.enforce_permission(interaction, 'staff'):
-            return
-            
-        # Validate URL
-        is_valid, error_msg = Validator.validate_profile_url(platform, profile_url)
-        if not is_valid:
-            await interaction.response.send_message(
-                f"❌ {error_msg}",
-                ephemeral=True
-            )
-            return
-            
-        normalized_id = Normalizer.normalize_profile_id(platform, profile_url)
-        if not normalized_id:
-            await interaction.response.send_message(
-                "❌ Invalid profile URL.",
-                ephemeral=True
-            )
-            return
-            
-        try:
-            # Check global ban
-            banned = await self.db_service.get_banned_profile(normalized_id)
-            if banned:
-                await interaction.response.send_message(
-                    f"❌ This profile is banned. Reason: {banned.reason}",
-                    ephemeral=True
-                )
-                return
-                
-            # Check global uniqueness
-            existing = await self.db_service.get_profile_by_normalized_id(normalized_id)
-            if existing:
-                await interaction.response.send_message(
-                    "❌ This profile is already registered to another user.",
-                    ephemeral=True
-                )
-                return
-                
-            # Ensure user exists
-            await self.db_service.create_user_if_not_exists(str(user.id), str(user))
-            
-            # Add profile
-            profile_id = await self.db_service.create_social_profile(
-                discord_id=str(user.id),
-                platform=platform,
-                profile_url=profile_url,
-                normalized_id=normalized_id
-            )
-            
-            await interaction.response.send_message(
-                f"✅ Profile registered for <@{user.id}>. Status: Pending",
-                ephemeral=True
-            )
-            
-            await self.db_service.log_action(
-                action_type='PROFILE_REGISTERED',
-                performed_by=str(interaction.user.id),
-                target_user=str(user.id),
-                details={
-                    'platform': platform,
-                    'profile_url': profile_url,
-                    'profile_id': profile_id
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in register: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while registering profile.",
-                ephemeral=True
-            )
             
     @app_commands.command(name="approval-page", description="[Staff] View pending approvals")
     async def approval_page(self, interaction: discord.Interaction):
@@ -516,3 +429,4 @@ class StaffCommands(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(StaffCommands(bot))
+
