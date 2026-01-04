@@ -1,4 +1,4 @@
-import discord
+"""import discord
 from discord.ext import commands
 
 from services.database_service import DatabaseService
@@ -163,4 +163,5 @@ class ModalHandlers(commands.Cog):
             raise
 
 async def setup(bot):
-    await bot.add_cog(ModalHandlers(bot))
+    await bot.add_cog(ModalHandlers(bot))"""
+
