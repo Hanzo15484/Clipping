@@ -65,8 +65,7 @@ class CLBot(commands.Bot):
             "commands.admin_commands",
             "commands.campaign_commands",
             "commands.payment_commands",
-            "events.interaction_handlers",
-            "events.modal_handlers"
+            "events.interaction_handlers"
         ]
         
         for cog in cogs:
@@ -155,3 +154,4 @@ async def main():
 if __name__ == "__main__":
     print("🚀 Starting CL Bot...")
     asyncio.run(main())
+
