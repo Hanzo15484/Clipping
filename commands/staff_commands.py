@@ -3,39 +3,19 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from datetime import datetime, timezone, timedelta
 
 from utils.permissions import PermissionManager
 from services.database_service import DatabaseService
 from utils.validators import Validator
 from utils.normalizers import Normalizer
-from views.approval_views import ProfileReviewView
 
 logger = logging.getLogger(__name__)
 db_service = DatabaseService()
-
-# IST timezone (UTC+5:30)
-IST = timezone(timedelta(hours=5, minutes=30))
 
 class StaffCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db_service = db_service
-        
-    def format_ist_time(self, dt_str):
-        """Format datetime string to IST and return discord timestamp"""
-        if not dt_str:
-            return "Never"
-        
-        try:
-            # Try to parse the string
-            from datetime import datetime
-            dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
-            # Return Discord timestamp (assuming it's already in UTC)
-            return f"<t:{int(dt.timestamp())}:R>"
-        except:
-            # If parsing fails, return raw string
-            return str(dt_str)[:19]
         
     @app_commands.command(name="register", description="[Staff] Register a social profile for user")
     @app_commands.describe(
@@ -126,7 +106,7 @@ class StaffCommands(commands.Cog):
             
     @app_commands.command(name="approval-page", description="[Staff] View pending approvals")
     async def approval_page(self, interaction: discord.Interaction):
-        """Show approval queue"""
+        """Show approval queue with working buttons"""
         if not await PermissionManager.enforce_permission(interaction, 'staff'):
             return
             
@@ -135,104 +115,236 @@ class StaffCommands(commands.Cog):
         try:
             # Get pending items
             pending_profiles = await self.db_service.get_pending_profiles(limit=10)
-            pending_submissions = await self.db_service.get_pending_submissions(limit=10)
             
-            embed = discord.Embed(
-                title="📋 Approval Queue",
-                description="Pending items requiring review",
-                color=discord.Color.yellow(),
-                timestamp=datetime.now(IST)
-            )
-            
-            if pending_profiles:
-                profile_text = "\n\n".join([
-                    f"**{i+1}. {p.platform.upper()}**\nUser: <@{p.discord_id}>\nProfile: {p.profile_url}\nSubmitted: {self.format_ist_time(p.created_at)}"
-                    for i, p in enumerate(pending_profiles)
-                ])
-                embed.add_field(
-                    name=f"📱 Pending Profiles ({len(pending_profiles)})",
-                    value=profile_text,
-                    inline=False
+            if not pending_profiles:
+                await interaction.followup.send(
+                    "✅ No pending profiles to approve.",
+                    ephemeral=True
+                )
+                return
+                
+            # Send each profile separately with its own buttons
+            for i, profile in enumerate(pending_profiles):
+                # Get Discord user for display
+                try:
+                    discord_user = await self.bot.fetch_user(int(profile.discord_id))
+                    username = discord_user.name
+                except:
+                    username = profile.discord_id
+                
+                embed = discord.Embed(
+                    title=f"📋 Profile Approval #{i+1}",
+                    color=discord.Color.yellow()
+                )
+                embed.add_field(name="Platform", value=profile.platform.upper(), inline=True)
+                embed.add_field(name="User", value=f"<@{profile.discord_id}> ({username})", inline=True)
+                embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
+                embed.add_field(name="Profile ID", value=f"`{profile.id}`", inline=True)
+                embed.add_field(name="Status", value=profile.status, inline=True)
+                
+                # Create view with buttons
+                view = discord.ui.View(timeout=300)  # 5 minute timeout
+                
+                # Approve button
+                approve_button = discord.ui.Button(
+                    label="✅ Approve",
+                    style=discord.ButtonStyle.success,
+                    custom_id=f"approve_profile_{profile.id}"
                 )
                 
-            if pending_submissions:
-                submission_text = "\n\n".join([
-                    f"**{i+1}. {s['campaign_name']}**\nUser: <@{s['discord_id']}>\nVideo: {s['video_url']}\nViews: {s['starting_views']:,}\nSubmitted: {self.format_ist_time(s['submitted_at'])}"
-                    for i, s in enumerate(pending_submissions)
-                ])
-                embed.add_field(
-                    name=f"📤 Pending Submissions ({len(pending_submissions)})",
-                    value=submission_text,
-                    inline=False
-                )
-                
-            if not pending_profiles and not pending_submissions:
-                embed.description = "✅ No pending items!"
-                
-            # Create select menu for profiles
-            view = None
-            if pending_profiles:
-                # Create select menu options
-                options = [
-                    discord.SelectOption(
-                        label=f"{p.platform} - ID: {p.id}",
-                        description=f"User: {p.discord_id[:8]}...",
-                        value=str(p.id)
-                    )
-                    for i, p in enumerate(pending_profiles)
-                ]
-                
-                # Create the select menu
-                select = discord.ui.Select(
-                    placeholder="Select profile to review",
-                    options=options
-                )
-                
-                # Define callback
-                async def select_callback(interaction: discord.Interaction):
-                    selected_value = select.values[0] if select.values else None
-                    if not selected_value:
-                        await interaction.response.send_message(
-                            "❌ No profile selected.",
-                            ephemeral=True
-                        )
-                        return
-                    
-                    profile_id = int(selected_value)
-                    profile = await db_service.get_profile_by_id(profile_id)
-                    
-                    if profile:
-                        view = ProfileReviewView(profile_id)
-                        embed = discord.Embed(
-                            title="👤 Profile Review",
-                            color=discord.Color.blue(),
-                            timestamp=datetime.now(IST)
-                        )
-                        embed.add_field(name="User", value=f"<@{profile.discord_id}>", inline=True)
-                        embed.add_field(name="Platform", value=profile.platform, inline=True)
-                        embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
-                        embed.add_field(name="Status", value=profile.status, inline=True)
-                        embed.add_field(name="Submitted", value=self.format_ist_time(profile.created_at), inline=True)
+                async def approve_callback(interaction: discord.Interaction, pid=profile.id):
+                    try:
+                        # Approve the profile
+                        await self.db_service.approve_profile(pid, str(interaction.user.id))
                         
-                        await interaction.response.send_message(
-                            embed=embed,
-                            view=view,
+                        # Update the message
+                        embed = discord.Embed(
+                            title="✅ Profile Approved",
+                            color=discord.Color.green()
+                        )
+                        embed.add_field(name="Approved by", value=f"<@{interaction.user.id}>", inline=True)
+                        embed.add_field(name="Profile ID", value=f"`{pid}`", inline=True)
+                        embed.add_field(name="Status", value="Approved ✅", inline=True)
+                        
+                        # Disable buttons
+                        for child in view.children:
+                            child.disabled = True
+                        
+                        await interaction.response.edit_message(embed=embed, view=view)
+                        
+                        # Send confirmation
+                        await interaction.followup.send(
+                            f"✅ Profile `{pid}` has been approved successfully!",
                             ephemeral=True
                         )
-                    else:
+                        
+                        logger.info(f"Profile {pid} approved by {interaction.user.id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error approving profile: {e}")
                         await interaction.response.send_message(
-                            "❌ Profile not found.",
+                            "❌ Error approving profile. Please try again.",
                             ephemeral=True
                         )
                 
-                # Assign callback to select
-                select.callback = select_callback
+                approve_button.callback = approve_callback
+                view.add_item(approve_button)
                 
-                # Create view and add select
-                view = discord.ui.View(timeout=180)
-                view.add_item(select)
+                # Reject button
+                reject_button = discord.ui.Button(
+                    label="❌ Reject",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"reject_profile_{profile.id}"
+                )
                 
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                async def reject_callback(interaction: discord.Interaction, pid=profile.id):
+                    # Create modal for rejection reason
+                    modal = discord.ui.Modal(title=f"Reject Profile #{pid}")
+                    
+                    reason_input = discord.ui.TextInput(
+                        label="Reason for rejection",
+                        style=discord.TextStyle.paragraph,
+                        placeholder="Enter rejection reason...",
+                        required=True,
+                        max_length=500,
+                        custom_id="rejection_reason"
+                    )
+                    modal.add_item(reason_input)
+                    
+                    async def modal_submit(interaction: discord.Interaction):
+                        reason = reason_input.value
+                        try:
+                            # Reject the profile
+                            await self.db_service.reject_profile(pid, reason)
+                            
+                            # Update the message
+                            embed = discord.Embed(
+                                title="❌ Profile Rejected",
+                                color=discord.Color.red()
+                            )
+                            embed.add_field(name="Rejected by", value=f"<@{interaction.user.id}>", inline=True)
+                            embed.add_field(name="Profile ID", value=f"`{pid}`", inline=True)
+                            embed.add_field(name="Reason", value=reason, inline=False)
+                            
+                            # Disable buttons
+                            for child in view.children:
+                                child.disabled = True
+                            
+                            await interaction.response.edit_message(embed=embed, view=view)
+                            
+                            # Send confirmation
+                            await interaction.followup.send(
+                                f"✅ Profile `{pid}` has been rejected.",
+                                ephemeral=True
+                            )
+                            
+                            logger.info(f"Profile {pid} rejected by {interaction.user.id}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error rejecting profile: {e}")
+                            await interaction.response.send_message(
+                                "❌ Error rejecting profile.",
+                                ephemeral=True
+                            )
+                    
+                    modal.on_submit = modal_submit
+                    await interaction.response.send_modal(modal)
+                
+                reject_button.callback = reject_callback
+                view.add_item(reject_button)
+                
+                # Ban button
+                ban_button = discord.ui.Button(
+                    label="🚫 Ban",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"ban_profile_{profile.id}"
+                )
+                
+                async def ban_callback(interaction: discord.Interaction, pid=profile.id, purl=profile.profile_url, pplat=profile.platform):
+                    # Create modal for ban reason
+                    modal = discord.ui.Modal(title=f"Ban Profile #{pid}")
+                    
+                    reason_input = discord.ui.TextInput(
+                        label="Ban reason",
+                        style=discord.TextStyle.paragraph,
+                        placeholder="Enter ban reason...",
+                        required=True,
+                        max_length=500,
+                        custom_id="ban_reason"
+                    )
+                    modal.add_item(reason_input)
+                    
+                    async def modal_submit(interaction: discord.Interaction):
+                        reason = reason_input.value
+                        try:
+                            # Get normalized ID
+                            normalized_id = Normalizer.normalize_profile_id(pplat, purl)
+                            if normalized_id:
+                                # Ban the profile
+                                await self.db_service.ban_profile(
+                                    platform=pplat,
+                                    profile_url=purl,
+                                    normalized_id=normalized_id,
+                                    reason=reason,
+                                    banned_by=str(interaction.user.id)
+                                )
+                                
+                                # Update the message
+                                embed = discord.Embed(
+                                    title="🚫 Profile Banned",
+                                    color=discord.Color.dark_red()
+                                )
+                                embed.add_field(name="Banned by", value=f"<@{interaction.user.id}>", inline=True)
+                                embed.add_field(name="Profile ID", value=f"`{pid}`", inline=True)
+                                embed.add_field(name="Reason", value=reason, inline=False)
+                                
+                                # Disable buttons
+                                for child in view.children:
+                                    child.disabled = True
+                                
+                                await interaction.response.edit_message(embed=embed, view=view)
+                                
+                                # Send confirmation
+                                await interaction.followup.send(
+                                    f"✅ Profile `{pid}` has been banned globally.",
+                                    ephemeral=True
+                                )
+                                
+                                logger.info(f"Profile {pid} banned by {interaction.user.id}")
+                            else:
+                                await interaction.response.send_message(
+                                    "❌ Error: Could not normalize profile ID.",
+                                    ephemeral=True
+                                )
+                                
+                        except Exception as e:
+                            logger.error(f"Error banning profile: {e}")
+                            await interaction.response.send_message(
+                                "❌ Error banning profile.",
+                                ephemeral=True
+                            )
+                    
+                    modal.on_submit = modal_submit
+                    await interaction.response.send_modal(modal)
+                
+                ban_button.callback = ban_callback
+                view.add_item(ban_button)
+                
+                # Send the embed with buttons
+                if i == 0:
+                    # First message
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                else:
+                    # Additional messages
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                
+            # Send summary
+            summary_embed = discord.Embed(
+                title="📊 Summary",
+                description=f"Showing {len(pending_profiles)} pending profile(s)",
+                color=discord.Color.blue()
+            )
+            await interaction.followup.send(embed=summary_embed, ephemeral=True)
             
         except Exception as e:
             logger.error(f"Error in approval_page: {e}")
@@ -327,15 +439,13 @@ class StaffCommands(commands.Cog):
                 
             embed = discord.Embed(
                 title="🚫 Banned Profiles",
-                color=discord.Color.red(),
-                timestamp=datetime.now(IST)
+                color=discord.Color.red()
             )
             
             for i, ban in enumerate(banned_profiles):
-                banned_time = self.format_ist_time(ban.banned_at)
                 embed.add_field(
                     name=f"{i+1}. {ban.platform.upper()}",
-                    value=f"**Profile:** {ban.profile_url}\n**Reason:** {ban.reason}\n**Banned by:** <@{ban.banned_by}>\n**Date:** {banned_time}",
+                    value=f"**Profile:** {ban.profile_url}\n**Reason:** {ban.reason}\n**Banned by:** <@{ban.banned_by}>",
                     inline=False
                 )
                 
@@ -345,6 +455,62 @@ class StaffCommands(commands.Cog):
             logger.error(f"Error in ban_list: {e}")
             await interaction.followup.send(
                 "❌ An error occurred while fetching banned profiles.",
+                ephemeral=True
+            )
+    
+    @app_commands.command(name="check-profile", description="[Staff] Check profile status")
+    @app_commands.describe(profile_url="Profile URL to check")
+    async def check_profile(self, interaction: discord.Interaction, profile_url: str):
+        """Check if a profile exists and its status"""
+        if not await PermissionManager.enforce_permission(interaction, 'staff'):
+            return
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Try to find profile by URL
+            profiles = []
+            for platform in ['instagram', 'tiktok', 'youtube']:
+                normalized_id = Normalizer.normalize_profile_id(platform, profile_url)
+                if normalized_id:
+                    profile = await self.db_service.get_profile_by_normalized_id(normalized_id)
+                    if profile:
+                        profiles.append(profile)
+            
+            if not profiles:
+                await interaction.followup.send(
+                    f"❌ No profile found with URL: {profile_url}",
+                    ephemeral=True
+                )
+                return
+                
+            for profile in profiles:
+                embed = discord.Embed(
+                    title="🔍 Profile Status Check",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="Platform", value=profile.platform.upper(), inline=True)
+                embed.add_field(name="User", value=f"<@{profile.discord_id}>", inline=True)
+                embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
+                embed.add_field(name="Status", value=profile.status, inline=True)
+                embed.add_field(name="Profile ID", value=f"`{profile.id}`", inline=True)
+                embed.add_field(name="Normalized ID", value=f"`{profile.normalized_id}`", inline=False)
+                
+                if profile.status == 'approved':
+                    embed.color = discord.Color.green()
+                elif profile.status == 'banned':
+                    embed.color = discord.Color.red()
+                elif profile.status == 'rejected':
+                    embed.color = discord.Color.orange()
+                else:
+                    embed.color = discord.Color.yellow()
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+        except Exception as e:
+            logger.error(f"Error in check_profile: {e}")
+            await interaction.followup.send(
+                "❌ An error occurred while checking profile.",
                 ephemeral=True
             )
 
