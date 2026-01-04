@@ -22,21 +22,31 @@ class StaffCommands(commands.Cog):
         self.bot = bot
         self.db_service = db_service
         
-    def format_ist_time(self, dt):
-        """Format datetime to IST and return discord timestamp"""
-        if dt is None:
+    def format_ist_time(self, dt_str):
+        """Format datetime string to IST and return discord timestamp"""
+        if not dt_str:
             return "Never"
         
-        # Convert to IST if it has timezone info
-        if dt.tzinfo is not None:
+        try:
+            # Convert string to datetime
+            if isinstance(dt_str, str):
+                dt = datetime.fromisoformat(dt_str)
+            else:
+                dt = dt_str
+            
+            # If no timezone, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            
+            # Convert to IST
             ist_dt = dt.astimezone(IST)
-        else:
-            # Assume UTC if no timezone
-            utc_dt = dt.replace(tzinfo=timezone.utc)
-            ist_dt = utc_dt.astimezone(IST)
-        
-        # Return Discord timestamp
-        return f"<t:{int(ist_dt.timestamp())}:R>"
+            
+            # Return Discord timestamp
+            return f"<t:{int(ist_dt.timestamp())}:R>"
+            
+        except Exception as e:
+            logger.error(f"Error formatting time {dt_str}: {e}")
+            return str(dt_str)[:19]  # Return first 19 chars of string
         
     @app_commands.command(name="register", description="[Staff] Register a social profile for user")
     @app_commands.describe(
@@ -174,17 +184,18 @@ class StaffCommands(commands.Cog):
             view = None
             if pending_profiles:
                 class ProfileSelectView(discord.ui.View):
-                    def __init__(self, profiles):
+                    def __init__(self, profiles, format_time_func):
                         super().__init__(timeout=180)  # 3 minute timeout
                         self.profiles = profiles
+                        self.format_time_func = format_time_func
                         
                         # Create select menu
                         select = discord.ui.Select(
                             placeholder="Select profile to review",
                             options=[
                                 discord.SelectOption(
-                                    label=f"{p.platform} - {p.discord_id[:8]}...",
-                                    description=f"Click to review profile {i+1}",
+                                    label=f"{p.platform} - ID: {p.id}",
+                                    description=f"User: {p.discord_id[:8]}...",
                                     value=str(p.id)
                                 )
                                 for i, p in enumerate(profiles)
@@ -208,7 +219,7 @@ class StaffCommands(commands.Cog):
                             embed.add_field(name="Platform", value=profile.platform, inline=True)
                             embed.add_field(name="Profile URL", value=profile.profile_url, inline=False)
                             embed.add_field(name="Status", value=profile.status, inline=True)
-                            embed.add_field(name="Submitted", value=self.format_ist_time(profile.created_at), inline=True)
+                            embed.add_field(name="Submitted", value=self.format_time_func(profile.created_at), inline=True)
                             
                             await interaction.response.send_message(
                                 embed=embed,
@@ -221,7 +232,7 @@ class StaffCommands(commands.Cog):
                                 ephemeral=True
                             )
                 
-                view = ProfileSelectView(pending_profiles)
+                view = ProfileSelectView(pending_profiles, self.format_ist_time)
                 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             
